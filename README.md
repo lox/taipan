@@ -29,6 +29,39 @@ The interpreter runs this, pausing at `search_files`, `summarise`, and `create_i
 - **[agent-harness](https://github.com/lox/agent-harness)** — the LLM returns Python code instead of (or alongside) JSON tool calls. The harness runs it in Taipan, executing tool calls as they're yielded.
 - **[gopherbox](https://github.com/buildkite/gopherbox)** — Taipan could be exposed as a `python` command within the sandbox, or Taipan could use gopherbox's VFS for sandboxed file operations.
 
+## Python Compatibility (Current, Authoritative)
+
+Taipan currently targets a **Python 3.4 baseline** (forked from gpython) with Taipan-specific extensions for agent workflows. It is **not** a full CPython implementation.
+
+### Baseline
+
+- Parser/compiler/VM semantics are based on Python 3.4-era gpython.
+- External function call yielding (`Run` / `Resume` / `ResumeWithError`) is Taipan-specific.
+- Compatibility shims are added only where they materially improve agent code execution.
+
+### Supported Today
+
+- Core Python 3.4-style control flow and expressions: variables, `if`/`for`/`while`, functions, closures, exceptions, comprehensions.
+- External function calls with resumable execution, including calls nested inside comprehensions and other nested frames.
+- Captured `print()` output via `Complete.Stdout` / `Error.Stdout`.
+- Built-in module imports only (for example `builtins`, `sys`); file-based module importing is blocked.
+- Practical f-string subset via compile-time rewrite: interpolation of `{expr}` (including multiple expressions and escaped braces).
+
+### Not Supported Today
+
+- Full modern Python syntax set (for example walrus `:=`, `match`/`case`, positional-only args `/`).
+- Full f-string formatting features such as conversion flags (`!r`, `!s`, `!a`) and format specs (`:{...}` or `:.2f`).
+- Async runtime (`async def`, `await`, `asyncio.gather()`).
+- Resource limits (instruction/time/allocation/output limits).
+- Snapshot serialisation (`Snapshot.Marshal` / `Unmarshal`).
+
+Unsupported syntax/features fail fast with a Python `SyntaxError`, `ImportError`, or runtime exception so callers can retry with a simpler snippet.
+
+### Transitional Security Notes
+
+- Some inherited gpython builtins still exist (for example `open`, `exec`, `eval`) even though they are not part of the long-term secure profile.
+- The compatibility roadmap below includes target hardening and language work; treat this section as the source of truth for current behaviour.
+
 ---
 
 ## Architecture
@@ -243,9 +276,9 @@ Pre-flight guards (from Monty) to prevent DoS before allocation:
 
 ---
 
-## Python subset: what we support
+## Python Compatibility Roadmap
 
-The goal is "the Python that LLMs actually generate." Based on analysis of pydantic/monty's 250+ test cases and real agent tool-calling patterns:
+The following phases describe the target compatibility roadmap. Current runtime behaviour is defined by the **Python Compatibility (Current, Authoritative)** section above.
 
 ### Phase 1 — Core (MVP)
 
@@ -266,7 +299,7 @@ Everything an LLM needs for basic tool orchestration:
 | Type methods | From gpython | `str.split()`, `str.join()`, `list.append()`, `dict.get()`, `dict.items()`, etc. |
 | List/dict/set comprehensions | From gpython | Including nested `for`, `if` filters |
 | Built-in functions | From gpython | `len`, `range`, `enumerate`, `zip`, `map`, `filter`, `sorted`, `reversed`, `sum`, `min`, `max`, `any`, `all`, `abs`, `round`, `int`, `float`, `str`, `bool`, `list`, `tuple`, `dict`, `set`, `print`, `repr`, `type`, `isinstance`, `hasattr`, `getattr`, `iter`, `next`, `chr`, `ord`, `hex`, `bin`, `oct`, `hash`, `id`, `pow`, `divmod` |
-| String formatting | From gpython | `f"hello {name}"`, `f"{x:.2f}"`, `"{}".format(x)` |
+| String formatting | Partial | `%` formatting and a practical `f"...{expr}..."` subset via compile-time rewrite. Full format specs/conversions are deferred. |
 | Tuple unpacking | From gpython | `a, b = func()`, `for k, v in d.items()` |
 | `assert` | From gpython | |
 | `del` | From gpython | |
@@ -323,9 +356,9 @@ For durable execution (suspend to database, resume later):
 | Metaclasses | Not needed. |
 | Descriptors / properties | Not needed for agent code. |
 | Decorators (general) | Only `@dataclass`. General decorators add complexity for minimal agent value. |
-| `exec()` / `eval()` | Security risk — no dynamic code execution within the sandbox. |
+| `exec()` / `eval()` | Target: disabled for sandbox safety. Note: inherited gpython builtins may still expose these until hardening is complete. |
 | Threading / multiprocessing | Not applicable. |
-| File I/O | No `open()`. If needed, expose via external functions or gopherbox VFS. |
+| File I/O | Target: no direct `open()`. Note: inherited gpython builtins may still expose file I/O until hardening is complete. |
 | `__dunder__` overriding | User-defined `__add__`, `__getattr__`, etc. Not needed. |
 
 ---
@@ -338,7 +371,7 @@ gpython targets Python 3.4. LLMs generate Python 3.8–3.12 syntax. The delta is
 
 | Syntax | Python version | Parser change | Compiler change |
 |--------|---------------|---------------|-----------------|
-| f-strings `f"..."` | 3.6 | gpython has partial support — needs expression parsing inside `{}` | Compile to `BUILD_STRING` or format call |
+| f-strings `f"..."` | 3.6 | Current: compile-time rewrite for `{expr}` subset. Full parser-native support deferred. | Current: rewrite to `%` formatting; full formatting semantics deferred. |
 | Type annotations | 3.0+ | Already parsed by gpython (3.4 had annotations). Need to add `x: int = 1` variable annotations (3.6). | Discard — don't evaluate annotation expressions |
 | `*` in literals | 3.5 | `[*a, *b]`, `{**a, **b}` — extend `BUILD_LIST`/`BUILD_MAP` productions | `LIST_EXTEND` / `DICT_MERGE` opcodes |
 
