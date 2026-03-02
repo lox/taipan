@@ -1,15 +1,7 @@
 # TODO
 
-## Open Issues
+## Completed
 
-- [ ] `Complete.Stdout` is not populated.
-  - Current behaviour: `taipan.Complete.Stdout` is always empty.
-  - Expected: `print()` output should be captured and returned via `Complete.Stdout` and `Error.Stdout`.
-
-- [ ] Sandbox import policy is not fully locked down.
-  - Current behaviour: there is still file-based import fallback to keep upstream tests passing.
-  - Expected: imports should be restricted to built-in modules only unless explicitly enabled.
-
-- [ ] f-string syntax is not supported yet.
-  - Current behaviour: modern f-string parsing fails.
-  - Expected: support is planned in Milestone 5.
+- [x] `Complete.Stdout` and `Error.Stdout` now capture `print()` output.
+- [x] Taipan `Run()` now restricts imports to built-in modules only.
+- [x] Taipan `Compile()` now supports a practical subset of f-strings, including expressions used in agent tool-calling flows.

@@ -415,12 +415,13 @@ Status (Mar 2026): **Implemented**.
 5. Implement `Run()` / `Resume()` / `ResumeWithError()` public API
 6. Test: simple ext call, nested ext calls, ext call in loop, ext call in try/except, ext call in comprehension, ext call in f-string
 
-Status (Mar 2026): **Mostly implemented**.
+Status (Mar 2026): **Implemented**.
 
 - Added `py.ExtFunction` and VM pause semantics for external call boundaries.
 - Added public execution API and progress model in `taipan.go` (`Compile`, `Run`, `Resume`, `ResumeWithError`, `FunctionCall`, `Complete`, `Error`, `Snapshot`).
 - Added regression tests for simple calls, nested call ordering, loop calls, calls in comprehensions, and `ResumeWithError` try/except behaviour.
-- Current known limitations: f-string syntax support is still deferred to Milestone 5 parser work.
+- Added stdout capture for `Complete.Stdout` / `Error.Stdout` and import sandboxing to built-in modules for Taipan `Run()`.
+- Added support for a practical subset of f-strings in Taipan `Compile()` (expression interpolation used in agent tool-calling flows).
 - Open bugs and limitations are tracked in `TODO.md`.
 
 ### Milestone 3: Resource limits (3 days)

@@ -2,6 +2,7 @@ package taipan
 
 import (
 	"context"
+	"os"
 
 	"github.com/lox/taipan/compile"
 	"github.com/lox/taipan/py"
@@ -20,7 +21,9 @@ type Program struct {
 
 // Snapshot is an opaque resumable VM state.
 type Snapshot struct {
-	frames []*py.Frame
+	frames     []*py.Frame
+	stdoutFile *os.File
+	stdoutPath string
 }
 
 // RunProgress is the result of starting or resuming execution.
@@ -56,7 +59,12 @@ func (*Error) runProgress() {}
 
 // Compile parses and compiles Python source code.
 func Compile(source string, externalFunctions []string) (*Program, error) {
-	code, err := compile.Compile(source, "<taipan>", py.ExecMode, 0, true)
+	rewrittenSource, err := rewriteFStrings(source)
+	if err != nil {
+		return nil, err
+	}
+
+	code, err := compile.Compile(rewrittenSource, "<taipan>", py.ExecMode, 0, true)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +87,16 @@ func Run(ctx context.Context, prog *Program, inputs map[string]Object) RunProgre
 	}
 
 	pyCtx := py.NewContext(py.DefaultContextOpts())
+	if err := installRestrictedImport(pyCtx); err != nil {
+		_ = pyCtx.Close()
+		return &Error{Exception: makeExceptionInfo(err)}
+	}
+
+	stdoutFile, stdoutPath, err := configureOutputCapture(pyCtx)
+	if err != nil {
+		_ = pyCtx.Close()
+		return &Error{Exception: makeExceptionInfo(err)}
+	}
 
 	module, err := pyCtx.Store().NewModule(pyCtx, &py.ModuleImpl{
 		Info: py.ModuleInfo{
@@ -88,6 +106,8 @@ func Run(ctx context.Context, prog *Program, inputs map[string]Object) RunProgre
 		Globals: py.NewStringDict(),
 	})
 	if err != nil {
+		_ = stdoutFile.Close()
+		_ = os.Remove(stdoutPath)
 		_ = pyCtx.Close()
 		return &Error{Exception: makeExceptionInfo(err)}
 	}
@@ -107,7 +127,11 @@ func Run(ctx context.Context, prog *Program, inputs map[string]Object) RunProgre
 		module.Globals[name] = py.NewExtFunction(name)
 	}
 
-	snap := &Snapshot{frames: []*py.Frame{py.NewFrame(pyCtx, module.Globals, module.Globals, prog.code, nil)}}
+	snap := &Snapshot{
+		frames:     []*py.Frame{py.NewFrame(pyCtx, module.Globals, module.Globals, prog.code, nil)},
+		stdoutFile: stdoutFile,
+		stdoutPath: stdoutPath,
+	}
 	return runSnapshot(ctx, snap, nil, false, nil)
 }
 
@@ -148,8 +172,8 @@ func runSnapshot(ctx context.Context, snap *Snapshot, firstResult Object, pushFi
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		closeSnapshot(snap)
-		return &Error{Exception: makeExceptionInfo(err)}
+		stdout := closeSnapshot(snap)
+		return &Error{Exception: makeExceptionInfo(err), Stdout: stdout}
 	}
 	if snap == nil || len(snap.frames) == 0 {
 		return &Error{Exception: makeExceptionInfo(py.ExceptionNewf(py.ValueError, "snapshot is nil"))}
@@ -162,8 +186,8 @@ func runSnapshot(ctx context.Context, snap *Snapshot, firstResult Object, pushFi
 
 	for i, frame := range snap.frames {
 		if err := ctx.Err(); err != nil {
-			closeSnapshot(snap)
-			return &Error{Exception: makeExceptionInfo(err)}
+			stdout := closeSnapshot(snap)
+			return &Error{Exception: makeExceptionInfo(err), Stdout: stdout}
 		}
 
 		switch {
@@ -199,15 +223,15 @@ func runSnapshot(ctx context.Context, snap *Snapshot, firstResult Object, pushFi
 			}
 		}
 
-		closeSnapshot(snap)
-		return &Error{Exception: makeExceptionInfo(err)}
+		stdout := closeSnapshot(snap)
+		return &Error{Exception: makeExceptionInfo(err), Stdout: stdout}
 	}
 
 	if result == nil {
 		result = py.None
 	}
-	closeSnapshot(snap)
-	return &Complete{Result: result}
+	stdout := closeSnapshot(snap)
+	return &Complete{Result: result, Stdout: stdout}
 }
 
 func mergePausedFrames(extCall *vm.FrameExitExtCall, frames []*py.Frame, frameIndex int) []*py.Frame {
@@ -264,13 +288,92 @@ func makeExceptionInfo(err error) py.ExceptionInfo {
 	}
 }
 
-func closeSnapshot(snap *Snapshot) {
-	if snap == nil || len(snap.frames) == 0 {
-		return
+func closeSnapshot(snap *Snapshot) string {
+	if snap == nil {
+		return ""
 	}
+
+	stdout := ""
+	if snap.stdoutPath != "" {
+		if snap.stdoutFile != nil {
+			_ = snap.stdoutFile.Close()
+			snap.stdoutFile = nil
+		}
+		if data, err := os.ReadFile(snap.stdoutPath); err == nil {
+			stdout = string(data)
+		}
+		_ = os.Remove(snap.stdoutPath)
+		snap.stdoutPath = ""
+	}
+
+	if len(snap.frames) == 0 {
+		return stdout
+	}
+
 	ctx := snap.frames[len(snap.frames)-1].Context
 	snap.frames = nil
 	if ctx != nil {
 		_ = ctx.Close()
 	}
+	return stdout
+}
+
+func configureOutputCapture(ctx py.Context) (*os.File, string, error) {
+	sysModule, err := ctx.GetModule("sys")
+	if err != nil {
+		return nil, "", err
+	}
+
+	file, err := os.CreateTemp("", "taipan-stdout-")
+	if err != nil {
+		return nil, "", err
+	}
+
+	stream := &py.File{File: file, FileMode: py.FileWrite}
+	sysModule.Globals["stdout"] = stream
+	sysModule.Globals["stderr"] = stream
+	return file, file.Name(), nil
+}
+
+func installRestrictedImport(ctx py.Context) error {
+	builtins := ctx.Store().Builtins
+	if builtins == nil {
+		return py.ExceptionNewf(py.SystemError, "builtins module not loaded")
+	}
+
+	importMethod := py.MustNewMethod("__import__", func(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, error) {
+		kwlist := []string{"name", "globals", "locals", "fromlist", "level"}
+		var name py.Object
+		var globals py.Object = py.None
+		var locals py.Object = py.None
+		var fromlist py.Object = py.Tuple{}
+		var level py.Object = py.Int(0)
+
+		err := py.ParseTupleAndKeywords(args, kwargs, "U|OOOi:__import__", kwlist, &name, &globals, &locals, &fromlist, &level)
+		if err != nil {
+			return nil, err
+		}
+
+		moduleName := string(name.(py.String))
+		if levelObj, ok := level.(py.Int); ok {
+			levelInt, err := levelObj.GoInt()
+			if err != nil {
+				return nil, err
+			}
+			if levelInt != 0 {
+				return nil, py.ExceptionNewf(py.ImportError, "relative imports are disabled")
+			}
+		}
+
+		if module, err := ctx.GetModule(moduleName); err == nil {
+			return module, nil
+		}
+		if impl := py.GetModuleImpl(moduleName); impl != nil {
+			return ctx.ModuleInit(impl)
+		}
+		return nil, py.ExceptionNewf(py.ImportError, "No module named %q", moduleName)
+	}, 0, "")
+	importMethod.Module = builtins
+	builtins.Globals["__import__"] = importMethod
+	return nil
 }

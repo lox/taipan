@@ -2,6 +2,8 @@ package taipan
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/lox/taipan/py"
@@ -233,6 +235,114 @@ record(msg)
 		t.Fatalf("expected record call, got %q", recordCall.Name)
 	}
 	requireString(t, recordCall.Args[0], "value=fallback!")
+
+	progress = Resume(context.Background(), recordCall.Snapshot, py.None)
+	if _, ok := progress.(*Complete); !ok {
+		t.Fatalf("expected Complete, got %T", progress)
+	}
+}
+
+func TestStdoutCapturedOnComplete(t *testing.T) {
+	prog, err := Compile(`
+print("before")
+value = identity()
+print("after")
+`, []string{"identity"})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := Run(context.Background(), prog, nil)
+	call, ok := progress.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", progress)
+	}
+	if call.Name != "identity" {
+		t.Fatalf("expected identity call, got %q", call.Name)
+	}
+
+	progress = Resume(context.Background(), call.Snapshot, py.Int(1))
+	complete, ok := progress.(*Complete)
+	if !ok {
+		t.Fatalf("expected Complete, got %T", progress)
+	}
+	if complete.Stdout != "before\nafter\n" {
+		t.Fatalf("stdout mismatch: %q", complete.Stdout)
+	}
+}
+
+func TestStdoutCapturedOnError(t *testing.T) {
+	prog, err := Compile(`
+print("before")
+1 / 0
+`, nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := Run(context.Background(), prog, nil)
+	result, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if result.Stdout != "before\n" {
+		t.Fatalf("stdout mismatch: %q", result.Stdout)
+	}
+}
+
+func TestRunDisallowsFileImports(t *testing.T) {
+	tempDir := t.TempDir()
+	moduleSource := []byte("VALUE = 7\n")
+	if err := os.WriteFile(tempDir+"/filemod.py", moduleSource, 0o644); err != nil {
+		t.Fatalf("failed to write module: %v", err)
+	}
+
+	prog, err := Compile(fmt.Sprintf(`
+import sys
+sys.path.append(%q)
+import filemod
+`, tempDir), nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := Run(context.Background(), prog, nil)
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.ImportError {
+		t.Fatalf("expected ImportError, got %v", errResult.Exception.Type)
+	}
+}
+
+func TestFStringExternalCall(t *testing.T) {
+	prog, err := Compile(`
+name = lookup()
+record(f"hello {name}")
+`, []string{"lookup", "record"})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := Run(context.Background(), prog, nil)
+	lookupCall, ok := progress.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", progress)
+	}
+	if lookupCall.Name != "lookup" {
+		t.Fatalf("expected lookup call, got %q", lookupCall.Name)
+	}
+
+	progress = Resume(context.Background(), lookupCall.Snapshot, py.String("world"))
+	recordCall, ok := progress.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", progress)
+	}
+	if recordCall.Name != "record" {
+		t.Fatalf("expected record call, got %q", recordCall.Name)
+	}
+	requireString(t, recordCall.Args[0], "hello world")
 
 	progress = Resume(context.Background(), recordCall.Snapshot, py.None)
 	if _, ok := progress.(*Complete); !ok {
