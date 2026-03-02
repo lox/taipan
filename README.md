@@ -397,6 +397,15 @@ This also gives us insertion-ordered dict semantics (Python 3.7+ guarantee) for 
 5. Get `go build` and existing gpython tests passing
 6. Relicense check (gpython is BSD-3)
 
+Status (Mar 2026): **Implemented**.
+
+- Core packages have been forked into this repo (`ast`, `compile`, `parser`, `py`, `symtable`, `vm`).
+- CLI/repl/examples/importlib code is not included in Taipan.
+- Stdlib is trimmed to a minimal runtime (`builtins` + `sys`; `sys` retained for `print()`/`input()` compatibility).
+- Legacy `.pyc`/marshal module loading paths are disabled.
+- `go build ./...` and `go test ./...` pass.
+- Upstream BSD-3 licensing is included (`LICENSE`) with attribution (`THIRD_PARTY_NOTICES.md`).
+
 ### Milestone 2: External function calls (1 week)
 
 1. Add `ExtFunction` value type to `py/`
@@ -405,6 +414,14 @@ This also gives us insertion-ordered dict semantics (Python 3.7+ guarantee) for 
 4. Implement `Snapshot` (capture/restore VM state)
 5. Implement `Run()` / `Resume()` / `ResumeWithError()` public API
 6. Test: simple ext call, nested ext calls, ext call in loop, ext call in try/except, ext call in comprehension, ext call in f-string
+
+Status (Mar 2026): **Mostly implemented**.
+
+- Added `py.ExtFunction` and VM pause semantics for external call boundaries.
+- Added public execution API and progress model in `taipan.go` (`Compile`, `Run`, `Resume`, `ResumeWithError`, `FunctionCall`, `Complete`, `Error`, `Snapshot`).
+- Added regression tests for simple calls, nested call ordering, loop calls, calls in comprehensions, and `ResumeWithError` try/except behaviour.
+- Current known limitations: f-string syntax support is still deferred to Milestone 5 parser work.
+- Open bugs and limitations are tracked in `TODO.md`.
 
 ### Milestone 3: Resource limits (3 days)
 
