@@ -163,10 +163,7 @@ func (o *File) ReadLine(args Tuple, kwargs StringDict) (Object, error) {
 
 	var buf []byte
 	b := make([]byte, 1)
-	for {
-		if limit >= 0 && int64(len(buf)) >= limit {
-			break
-		}
+	for limit < 0 || int64(len(buf)) < limit {
 		n, err := o.File.Read(b)
 		if n > 0 {
 			buf = append(buf, b[0])
@@ -190,7 +187,7 @@ func (o *File) Close() (Object, error) {
 }
 
 func (o *File) Flush() (Object, error) {
-	err := o.File.Sync()
+	err := o.Sync()
 	if perr, ok := err.(*os.PathError); ok && perr.Err == os.ErrClosed {
 		return nil, errClosed
 	}
@@ -249,7 +246,7 @@ func OpenFile(filename, mode string, buffering int) (Object, error) {
 
 	if finfo, err := f.Stat(); err == nil {
 		if finfo.IsDir() {
-			f.Close()
+			_ = f.Close()
 			return nil, ExceptionNewf(IsADirectoryError, "Is a directory: '%s'", filename)
 		}
 	}

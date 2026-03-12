@@ -46,20 +46,22 @@ Taipan currently targets a **Python 3.4 baseline** (forked from gpython) with Ta
 - Captured `print()` output via `Complete.Stdout` / `Error.Stdout`.
 - Built-in module imports only (for example `builtins`, `sys`); file-based module importing is blocked.
 - Practical f-string subset via compile-time rewrite: interpolation of `{expr}` (including multiple expressions and escaped braces).
+- Runtime safety limits for instruction count, Python call depth, stdout volume, and host `context.Context` cancellation.
 
 ### Not Supported Today
 
 - Full modern Python syntax set (for example walrus `:=`, `match`/`case`, positional-only args `/`).
 - Full f-string formatting features such as conversion flags (`!r`, `!s`, `!a`) and format specs (`:{...}` or `:.2f`).
 - Async runtime (`async def`, `await`, `asyncio.gather()`).
-- Resource limits (instruction/time/allocation/output limits).
+- Allocation limits and pre-flight DoS guards for giant repeats/exponents.
 - Snapshot serialisation (`Snapshot.Marshal` / `Unmarshal`).
 
 Unsupported syntax/features fail fast with a Python `SyntaxError`, `ImportError`, or runtime exception so callers can retry with a simpler snippet.
 
 ### Transitional Security Notes
 
-- Some inherited gpython builtins still exist (for example `open`, `exec`, `eval`) even though they are not part of the long-term secure profile.
+- Taipan `Run()` strips dangerous builtins such as `open`, `eval`, `exec`, `compile`, and `input` from the execution environment.
+- Lower-level forked gpython packages still contain those implementations, so the Taipan API remains the supported security boundary.
 - The compatibility roadmap below includes target hardening and language work; treat this section as the source of truth for current behaviour.
 
 ---
@@ -254,25 +256,21 @@ Following gopherbox's approach and Monty's `ResourceTracker`:
 
 ```go
 type Limits struct {
-    MaxDuration       time.Duration // Wall clock timeout. Default: 30s.
     MaxInstructions   int           // Bytecode ops executed. Default: 1_000_000.
     MaxCallDepth      int           // Function call recursion. Default: 100.
-    MaxAllocations    int           // Heap objects created. Default: 100_000.
     MaxOutputBytes    int           // print() output. Default: 1MB.
 }
 ```
 
-Checked in the VM hot loop:
-- **Instructions**: increment counter per opcode; check every 256 ops.
-- **Duration**: `context.Context` deadline; checked every 256 ops alongside instruction count.
-- **Call depth**: checked on `CALL_FUNCTION`.
-- **Allocations**: checked on `BUILD_LIST`, `BUILD_DICT`, string concat, etc.
-- **Output**: checked in the `print()` builtin.
+Checked today:
+- **Instructions**: incremented per opcode in the VM hot loop.
+- **Duration**: enforced via the caller's `context.Context` cancellation/deadline.
+- **Call depth**: enforced when new Python frames are entered.
+- **Output**: enforced in the `print()` builtin before bytes are written.
 
-Pre-flight guards (from Monty) to prevent DoS before allocation:
-- `2 ** 10_000_000` — check exponent size before computing
-- `"x" * 10_000_000` — check repeat count before allocating
-- `[0] * 10_000_000` — check list repeat size
+Still planned:
+- **Allocations**: heap allocation counting for list/dict/string growth.
+- **Pre-flight guards**: giant exponent/repeat checks before allocation.
 
 ---
 
@@ -466,6 +464,16 @@ Status (Mar 2026): **Implemented**.
 5. Output size limiting
 6. Pre-flight DoS guards (power, repeat, shift size checks)
 7. Test: each limit triggers correctly, limits don't affect normal execution
+
+Status (Mar 2026): **Partially implemented**.
+
+- Added `Limits` and `RunWithLimits()` to the public Taipan API.
+- Added instruction counting in the VM hot loop.
+- Added Python call depth checks for user-defined function execution.
+- Added stdout size limiting in `print()`.
+- Added host `context.Context` cancellation handling during bytecode execution.
+- Added regression tests for infinite loops, deep recursion, excessive output, and dangerous builtin access.
+- Remaining work in this milestone: allocation limits and pre-flight DoS guards.
 
 ### Milestone 4: Fix Dict + polish types (3 days)
 

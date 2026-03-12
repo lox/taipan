@@ -153,12 +153,12 @@ func (e ExceptionInfo) Error() string {
 // Dump a traceback for exc to w
 func (exc *ExceptionInfo) TracebackDump(w io.Writer) {
 	if exc == nil {
-		fmt.Fprintf(w, "Traceback <nil>\n")
+		_, _ = fmt.Fprintf(w, "Traceback <nil>\n")
 		return
 	}
-	fmt.Fprintf(w, "Traceback (most recent call last):\n")
+	_, _ = fmt.Fprintf(w, "Traceback (most recent call last):\n")
 	exc.Traceback.TracebackDump(w)
-	fmt.Fprintf(w, "%v\n", exc.Value)
+	_, _ = fmt.Fprintf(w, "%v\n", exc.Value)
 }
 
 // Test for being set

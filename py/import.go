@@ -220,9 +220,8 @@ func XImportModuleLevelObject(ctx Context, nameObj, given_globals, locals, given
 	if level > 0 {
 		last_dot := len(Package)
 		var base string
-		level_up := 1
 
-		for level_up = 1; level_up < level; level_up += 1 {
+		for step := 1; step < level; step++ {
 			last_dot = strings.LastIndex(string(Package[:last_dot]), ".")
 			if last_dot < 0 {
 				return nil, ExceptionNewf(ValueError, "attempted relative import beyond top-level Package")

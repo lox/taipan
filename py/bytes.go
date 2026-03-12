@@ -154,7 +154,7 @@ func (a Bytes) M__repr__() (Object, error) {
 	// FIXME combine this with parser/stringescape.go into file in py?
 	var out bytes.Buffer
 	quote := '\''
-	if bytes.IndexByte(a, byte('\'')) >= 0 && !(bytes.IndexByte(a, byte('"')) >= 0) {
+	if bytes.IndexByte(a, byte('\'')) >= 0 && bytes.IndexByte(a, byte('"')) < 0 {
 		quote = '"'
 	}
 	out.WriteRune('b')

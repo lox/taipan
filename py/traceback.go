@@ -51,7 +51,7 @@ RuntimeError: this is the error message
 // Dump a traceback for tb to w
 func (tb *Traceback) TracebackDump(w io.Writer) {
 	for ; tb != nil; tb = tb.Next {
-		fmt.Fprintf(w, "  File %q, line %d, in %s\n", tb.Frame.Code.Filename, tb.Lineno, tb.Frame.Code.Name)
+		_, _ = fmt.Fprintf(w, "  File %q, line %d, in %s\n", tb.Frame.Code.Filename, tb.Lineno, tb.Frame.Code.Name)
 		//fmt.Fprintf(w, "    %s\n", "FIXME line of source goes here")
 	}
 }

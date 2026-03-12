@@ -314,11 +314,12 @@ type LexToken struct {
 func newLexToken(token int, yylval *yySymType) (lt LexToken) {
 	lt.token = token
 	lt.pos = yylval.pos
-	if token == NAME {
+	switch token {
+	case NAME:
 		lt.value = py.String(yylval.str)
-	} else if token == STRING || token == NUMBER {
+	case STRING, NUMBER:
 		lt.value = yylval.obj
-	} else {
+	default:
 		lt.value = nil
 	}
 	return

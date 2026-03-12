@@ -1418,14 +1418,12 @@ func TypeNew(metatype *Type, args Tuple, kwargs StringDict) (Object, error) {
 	et := new_type
 	et.Name = string(name)
 	// FIXME et.Slots = slots
-	slots = nil
 
 	// Initialize tp_flags
 	new_type.Flags = TPFLAGS_DEFAULT | TPFLAGS_HEAPTYPE | TPFLAGS_BASETYPE
 
 	// Set tp_base and tp_bases
 	new_type.Bases = bases
-	bases = nil
 	new_type.Base = base
 
 	// Initialize tp_dict from passed-in dict

@@ -523,8 +523,8 @@ func (a String) M__mod__(other Object) (Object, error) {
 		params[i] = values[i]
 	}
 	s := string(a)
-	s = strings.Replace(s, "%s", "%v", -1)
-	s = strings.Replace(s, "%r", "%#v", -1)
+	s = strings.ReplaceAll(s, "%s", "%v")
+	s = strings.ReplaceAll(s, "%r", "%#v")
 	return String(fmt.Sprintf(s, params...)), nil
 }
 

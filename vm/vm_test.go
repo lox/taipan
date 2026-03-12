@@ -46,8 +46,8 @@ type worker struct {
 
 // run loads a specific worker with a specific work load
 func (w *worker) run(b testing.TB, pySrc string, countUpto int) {
-	pySrc = strings.Replace(pySrc, "{{WORKER_ID}}", w.name, -1)
-	pySrc = strings.Replace(pySrc, "{{FIB_TO}}", strconv.Itoa(countUpto), -1)
+	pySrc = strings.ReplaceAll(pySrc, "{{WORKER_ID}}", w.name)
+	pySrc = strings.ReplaceAll(pySrc, "{{FIB_TO}}", strconv.Itoa(countUpto))
 
 	module, code := pytest.CompileSrc(b, w.ctx, pySrc, w.name)
 	_, err := w.ctx.RunCode(code, module.Globals, module.Globals, nil)

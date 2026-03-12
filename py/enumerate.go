@@ -72,7 +72,7 @@ func (ei *EnumerateIterator) M__iter__() (Object, error) {
 
 // EnumerateIterator iterator next
 func (ei *EnumerateIterator) M__next__() (Object, error) {
-	value, err := Next(ei.Enumerate.Iterable)
+	value, err := Next(ei.Iterable)
 	if err != nil {
 		return nil, err
 	}

@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/lox/taipan/compile"
 	"github.com/lox/taipan/py"
-	"github.com/google/go-cmp/cmp"
 
 	_ "github.com/lox/taipan/stdlib"
 )
@@ -215,20 +215,29 @@ func (task *Task) run() error {
 	}
 
 	ctx := py.NewContext(opts)
-	defer ctx.Close()
+	defer func() {
+		_ = ctx.Close()
+	}()
 
 	sys := ctx.Store().MustGetModule("sys")
 	tmp, err := os.MkdirTemp("", "gpython-pytest-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() {
+		_ = os.RemoveAll(tmp)
+	}()
 
 	out, err := os.Create(filepath.Join(tmp, "combined"))
 	if err != nil {
 		return fmt.Errorf("could not create stdout+stderr output file: %w", err)
 	}
-	defer out.Close()
+	outPath := out.Name()
+	defer func() {
+		if out != nil {
+			_ = out.Close()
+		}
+	}()
 
 	sys.Globals["stdout"] = &py.File{File: out, FileMode: py.FileWrite}
 	sys.Globals["stderr"] = &py.File{File: out, FileMode: py.FileWrite}
@@ -248,15 +257,18 @@ func (task *Task) run() error {
 	}
 
 	// Close the ctx explicitly as it may legitimately generate output
-	ctx.Close()
+	if err := ctx.Close(); err != nil {
+		return fmt.Errorf("could not close context: %w", err)
+	}
 	<-ctx.Done()
 
 	err = out.Close()
 	if err != nil {
 		return fmt.Errorf("could not close output file: %w", err)
 	}
+	out = nil
 
-	got, err := os.ReadFile(out.Name())
+	got, err := os.ReadFile(outPath)
 	if err != nil {
 		return fmt.Errorf("could not read script output file: %w", err)
 	}

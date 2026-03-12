@@ -523,7 +523,6 @@ func unpack_iterable(vm *Vm, v py.Object, argcnt int, argcntafter int, sp int) e
 	}
 	sp--
 	vm.frame.Stack[sp] = l
-	i++
 
 	ll := l.Len()
 	if ll < argcntafter {
@@ -1645,7 +1644,7 @@ func (vm *Vm) Call(argc int32, starArgs py.Object, starKwargs py.Object) error {
 	kwargsTuple := vm.frame.Stack[p:q]
 	p, q = p-nargs, p
 	args := py.Tuple(vm.frame.Stack[p:q])
-	p, q = p-1, p
+	p--
 	fn := vm.frame.Stack[p]
 	// Drop everything off the stack
 	vm.frame.Stack = vm.frame.Stack[:p]
@@ -1774,6 +1773,7 @@ func runFrame(frame *py.Frame, injected *py.ExceptionInfo) (res py.Object, err e
 		frame:   frame,
 		context: frame.Context,
 	}
+	state := py.GetExecutionState(frame.Context)
 
 	if injected != nil {
 		vm.curexc = *injected
@@ -1789,6 +1789,9 @@ func runFrame(frame *py.Frame, injected *py.ExceptionInfo) (res py.Object, err e
 	var arg int32
 	opcodes := frame.Code.Code
 	for {
+		if err := state.BeforeOpcode(); err != nil {
+			return nil, err
+		}
 		if vm.why == whyNot {
 			if debugging {
 				debugf("* %4d:", frame.Lasti)
@@ -2073,6 +2076,12 @@ func tooManyPositional(co *py.Code, given, defcount int, fastlocals []py.Object)
 //
 // This is the equivalent of PyEval_EvalCode with closure support
 func EvalCode(ctx py.Context, co *py.Code, globals, locals py.StringDict, args []py.Object, kws py.StringDict, defs []py.Object, kwdefs py.StringDict, closure py.Tuple) (retval py.Object, err error) {
+	state := py.GetExecutionState(ctx)
+	if err := state.EnterCall(); err != nil {
+		return nil, err
+	}
+	defer state.ExitCall()
+
 	total_args := int(co.Argcount + co.Kwonlyargcount)
 	n := len(args)
 	var kwdict py.StringDict

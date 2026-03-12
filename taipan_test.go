@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/lox/taipan/py"
 )
@@ -378,5 +380,172 @@ func requireString(t *testing.T, obj Object, want string) {
 	}
 	if string(value) != want {
 		t.Fatalf("string mismatch: got %q want %q", string(value), want)
+	}
+}
+
+func TestRunDisallowsDangerousBuiltins(t *testing.T) {
+	tests := map[string]string{
+		"open":    `open("blocked.txt")`,
+		"eval":    `eval("1 + 1")`,
+		"exec":    `exec("x = 1")`,
+		"compile": `compile("1 + 1", "<string>", "eval")`,
+		"input":   `input("prompt> ")`,
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			prog, err := Compile(source, nil)
+			if err != nil {
+				t.Fatalf("compile failed: %v", err)
+			}
+
+			progress := Run(context.Background(), prog, nil)
+			errResult, ok := progress.(*Error)
+			if !ok {
+				t.Fatalf("expected Error, got %T", progress)
+			}
+			if errResult.Exception.Type != py.NameError {
+				t.Fatalf("expected NameError, got %v", errResult.Exception.Type)
+			}
+		})
+	}
+}
+
+func TestRunWithLimitsStopsInfiniteLoop(t *testing.T) {
+	prog, err := Compile(`
+while True:
+    pass
+`, nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := RunWithLimits(context.Background(), prog, nil, Limits{
+		MaxInstructions: 1_000,
+	})
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.RuntimeError {
+		t.Fatalf("expected RuntimeError, got %v", errResult.Exception.Type)
+	}
+	requireExceptionMessageContains(t, errResult.Exception, "instruction limit")
+}
+
+func TestRunWithLimitsStopsDeepRecursion(t *testing.T) {
+	prog, err := Compile(`
+def recurse():
+    return recurse()
+
+recurse()
+`, nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := RunWithLimits(context.Background(), prog, nil, Limits{
+		MaxInstructions: 100_000,
+		MaxCallDepth:    8,
+	})
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.RuntimeError {
+		t.Fatalf("expected RuntimeError, got %v", errResult.Exception.Type)
+	}
+	requireExceptionMessageContains(t, errResult.Exception, "call depth")
+}
+
+func TestRunWithLimitsPreservesCallDepthAcrossResume(t *testing.T) {
+	prog, err := Compile(`
+def recurse(n):
+    if n == 0:
+        pause()
+        return recurse(2)
+    return recurse(n - 1)
+
+recurse(4)
+`, []string{"pause"})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := RunWithLimits(context.Background(), prog, nil, Limits{
+		MaxInstructions: 100_000,
+		MaxCallDepth:    5,
+	})
+	call, ok := progress.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", progress)
+	}
+	if call.Name != "pause" {
+		t.Fatalf("expected pause call, got %q", call.Name)
+	}
+
+	progress = Resume(context.Background(), call.Snapshot, py.None)
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.RuntimeError {
+		t.Fatalf("expected RuntimeError, got %v", errResult.Exception.Type)
+	}
+	requireExceptionMessageContains(t, errResult.Exception, "call depth")
+}
+
+func TestRunWithLimitsHonoursContextCancellation(t *testing.T) {
+	prog, err := Compile(`
+while True:
+    pass
+`, nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(5*time.Millisecond, cancel)
+
+	progress := RunWithLimits(ctx, prog, nil, Limits{
+		MaxInstructions: 10_000_000,
+	})
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.InterruptedError {
+		t.Fatalf("expected InterruptedError, got %v", errResult.Exception.Type)
+	}
+}
+
+func TestRunWithLimitsStopsExcessiveOutput(t *testing.T) {
+	prog, err := Compile(`print("abcdefghij")`, nil)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	progress := RunWithLimits(context.Background(), prog, nil, Limits{
+		MaxInstructions: 10_000,
+		MaxOutputBytes:  5,
+	})
+	errResult, ok := progress.(*Error)
+	if !ok {
+		t.Fatalf("expected Error, got %T", progress)
+	}
+	if errResult.Exception.Type != py.RuntimeError {
+		t.Fatalf("expected RuntimeError, got %v", errResult.Exception.Type)
+	}
+	requireExceptionMessageContains(t, errResult.Exception, "output limit")
+	if errResult.Stdout != "" {
+		t.Fatalf("expected no captured stdout, got %q", errResult.Stdout)
+	}
+}
+
+func requireExceptionMessageContains(t *testing.T, exc py.ExceptionInfo, want string) {
+	t.Helper()
+	if !strings.Contains(exc.Error(), want) {
+		t.Fatalf("exception %q does not contain %q", exc.Error(), want)
 	}
 }

@@ -270,14 +270,15 @@ func (is Instructions) stackDepthWalk(baseIs Instructions, seen map[int]bool, st
 			}
 			opcode := oparg.Op
 			target_depth := depth
-			if opcode == vm.FOR_ITER {
+			switch opcode {
+			case vm.FOR_ITER:
 				target_depth = depth - 2
-			} else if opcode == vm.SETUP_FINALLY || opcode == vm.SETUP_EXCEPT {
+			case vm.SETUP_FINALLY, vm.SETUP_EXCEPT:
 				target_depth = depth + 3
 				if target_depth > maxdepth {
 					maxdepth = target_depth
 				}
-			} else if opcode == vm.JUMP_IF_TRUE_OR_POP || opcode == vm.JUMP_IF_FALSE_OR_POP {
+			case vm.JUMP_IF_TRUE_OR_POP, vm.JUMP_IF_FALSE_OR_POP:
 				depth = depth - 1
 			}
 			isTarget := baseIs[dest.Number():]
@@ -429,7 +430,7 @@ type JumpAbs struct {
 
 // Set the Arg from the Jump Label
 func (o *JumpAbs) Resolve() {
-	o.OpArg.Arg = o.Dest.Pos()
+	o.Arg = o.Dest.Pos()
 }
 
 // A relative JUMP with destination label
@@ -446,7 +447,7 @@ func (o *JumpRel) Resolve() {
 	if o.Dest.Pos() < currentPos {
 		panic("JUMP_FORWARD can't jump backwards")
 	}
-	o.OpArg.Arg = o.Dest.Pos() - currentPos
+	o.Arg = o.Dest.Pos() - currentPos
 	if o.Size() != currentSize {
 		// FIXME There is an awkward moment where jump forwards is
 		// between 0x1000 and 0x1002 where the Arg oscillates

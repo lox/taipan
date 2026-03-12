@@ -782,9 +782,10 @@ func (st *SymTable) AnalyzeBlock(bound, free, global StringSet) {
 	newfree.Update(allfree)
 
 	/* Check if any local variables must be converted to cell variables */
-	if st.Type == FunctionBlock {
+	switch st.Type {
+	case FunctionBlock:
 		AnalyzeCells(scopes, newfree)
-	} else if st.Type == ClassBlock {
+	case ClassBlock:
 		st.DropClassFree(newfree)
 	}
 	/* Records the results of the analysis in the symbol table entry */

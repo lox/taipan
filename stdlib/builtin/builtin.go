@@ -211,26 +211,26 @@ func builtin_print(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Obje
 		return nil, err
 	}
 
+	var rendered strings.Builder
 	for i, v := range args {
 		v, err := py.Str(v)
 		if err != nil {
 			return nil, err
 		}
-
-		_, err = py.Call(write, py.Tuple{v}, nil)
-		if err != nil {
-			return nil, err
-		}
+		rendered.WriteString(string(v.(py.String)))
 
 		if i != len(args)-1 {
-			_, err = py.Call(write, py.Tuple{sep}, nil)
-			if err != nil {
-				return nil, err
-			}
+			rendered.WriteString(string(sep))
 		}
 	}
+	rendered.WriteString(string(end))
 
-	_, err = py.Call(write, py.Tuple{end}, nil)
+	output := rendered.String()
+	if err := py.GetExecutionState(self.(*py.Module).Context).ReserveOutput(len(output)); err != nil {
+		return nil, err
+	}
+
+	_, err = py.Call(write, py.Tuple{py.String(output)}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1066,10 +1066,11 @@ func min_max(args py.Tuple, kwargs py.StringDict, name string) (py.Object, error
 	var format string
 	var values py.Object
 	var cmp func(a py.Object, b py.Object) (py.Object, error)
-	if name == "min" {
+	switch name {
+	case "min":
 		format = "|$OO:min"
 		cmp = py.Le
-	} else if name == "max" {
+	case "max":
 		format = "|$OO:max"
 		cmp = py.Ge
 	}
@@ -1239,7 +1240,7 @@ func builtin_input(self py.Object, args py.Tuple) (py.Object, error) {
 
 		flush, err := py.GetAttrString(stdout, "flush")
 		if err == nil {
-			py.Call(flush, nil, nil)
+			_, _ = py.Call(flush, nil, nil)
 		}
 	}
 

@@ -13,6 +13,9 @@ import (
 // Object is the public object type used by Taipan programs.
 type Object = py.Object
 
+// Limits controls the runtime safety bounds for a Taipan execution.
+type Limits = py.ExecutionLimits
+
 // Program is a parsed and compiled Python program ready for execution.
 type Program struct {
 	code              *py.Code
@@ -80,14 +83,40 @@ func Compile(source string, externalFunctions []string) (*Program, error) {
 	return &Program{code: code, externalFunctions: extNames}, nil
 }
 
+// DefaultLimits returns the default runtime safety bounds for execution.
+func DefaultLimits() Limits {
+	return Limits{
+		MaxInstructions: 1_000_000,
+		MaxCallDepth:    100,
+		MaxOutputBytes:  1_000_000,
+	}
+}
+
 // Run starts execution of the program with optional global inputs.
 func Run(ctx context.Context, prog *Program, inputs map[string]Object) RunProgress {
+	return RunWithLimits(ctx, prog, inputs, DefaultLimits())
+}
+
+// RunWithLimits starts execution with the supplied runtime limits.
+func RunWithLimits(ctx context.Context, prog *Program, inputs map[string]Object, limits Limits) RunProgress {
 	if prog == nil || prog.code == nil {
 		return &Error{Exception: makeExceptionInfo(py.ExceptionNewf(py.ValueError, "program is nil"))}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	limits = normalizeLimits(limits)
 
 	pyCtx := py.NewContext(py.DefaultContextOpts())
+	py.SetExecutionState(pyCtx, &py.ExecutionState{
+		HostContext: ctx,
+		Limits:      py.ExecutionLimits(limits),
+	})
 	if err := installRestrictedImport(pyCtx); err != nil {
+		_ = pyCtx.Close()
+		return &Error{Exception: makeExceptionInfo(err)}
+	}
+	if err := installBuiltinRestrictions(pyCtx); err != nil {
 		_ = pyCtx.Close()
 		return &Error{Exception: makeExceptionInfo(err)}
 	}
@@ -178,6 +207,8 @@ func runSnapshot(ctx context.Context, snap *Snapshot, firstResult Object, pushFi
 	if snap == nil || len(snap.frames) == 0 {
 		return &Error{Exception: makeExceptionInfo(py.ExceptionNewf(py.ValueError, "snapshot is nil"))}
 	}
+	state := py.GetExecutionState(snap.frames[0].Context)
+	state.RestoreCallDepth(len(snap.frames) - 1)
 
 	var (
 		result Object
@@ -210,6 +241,9 @@ func runSnapshot(ctx context.Context, snap *Snapshot, firstResult Object, pushFi
 		}
 
 		if err == nil {
+			if i < len(snap.frames)-1 {
+				state.ExitCall()
+			}
 			continue
 		}
 
@@ -255,9 +289,7 @@ func tupleToArgs(args py.Tuple) []Object {
 		return nil
 	}
 	out := make([]Object, len(args))
-	for i := range args {
-		out[i] = args[i]
-	}
+	copy(out, args)
 	return out
 }
 
@@ -272,6 +304,20 @@ func kwargsToMap(kwargs py.StringDict) map[string]Object {
 	return out
 }
 
+func normalizeLimits(limits Limits) Limits {
+	defaults := DefaultLimits()
+	if limits.MaxInstructions <= 0 {
+		limits.MaxInstructions = defaults.MaxInstructions
+	}
+	if limits.MaxCallDepth <= 0 {
+		limits.MaxCallDepth = defaults.MaxCallDepth
+	}
+	if limits.MaxOutputBytes <= 0 {
+		limits.MaxOutputBytes = defaults.MaxOutputBytes
+	}
+	return limits
+}
+
 func makeExceptionInfo(err error) py.ExceptionInfo {
 	switch e := err.(type) {
 	case py.ExceptionInfo:
@@ -283,6 +329,9 @@ func makeExceptionInfo(err error) py.ExceptionInfo {
 		}
 		return info
 	default:
+		if exc := py.ExceptionFromContextError(err); exc != nil {
+			return py.ExceptionInfo{Type: exc.Type(), Value: exc}
+		}
 		exc := py.MakeException(err)
 		return py.ExceptionInfo{Type: exc.Type(), Value: exc}
 	}
@@ -375,5 +424,16 @@ func installRestrictedImport(ctx py.Context) error {
 	}, 0, "")
 	importMethod.Module = builtins
 	builtins.Globals["__import__"] = importMethod
+	return nil
+}
+
+func installBuiltinRestrictions(ctx py.Context) error {
+	builtins := ctx.Store().Builtins
+	if builtins == nil {
+		return py.ExceptionNewf(py.SystemError, "builtins module not loaded")
+	}
+	for _, name := range []string{"open", "eval", "exec", "compile", "input"} {
+		delete(builtins.Globals, name)
+	}
 	return nil
 }

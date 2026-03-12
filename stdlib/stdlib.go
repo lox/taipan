@@ -27,13 +27,14 @@ func init() {
 
 // context implements interface py.Context
 type context struct {
-	store     *py.ModuleStore
-	opts      py.ContextOpts
-	closeOnce sync.Once
-	closing   bool
-	closed    bool
-	running   sync.WaitGroup
-	done      chan struct{}
+	store          *py.ModuleStore
+	opts           py.ContextOpts
+	executionState *py.ExecutionState
+	closeOnce      sync.Once
+	closing        bool
+	closed         bool
+	running        sync.WaitGroup
+	done           chan struct{}
 }
 
 // NewContext creates a new gpython interpreter instance context.
@@ -49,7 +50,9 @@ func NewContext(opts py.ContextOpts) py.Context {
 
 	ctx.store = py.NewModuleStore()
 
-	py.Import(ctx, "builtins", "sys")
+	if err := py.Import(ctx, "builtins", "sys"); err != nil {
+		panic(err)
+	}
 
 	sys_mod := ctx.Store().MustGetModule("sys")
 	sys_mod.Globals["argv"] = py.NewListFromStrings(opts.SysArgs)
@@ -193,6 +196,14 @@ func (ctx *context) Close() error {
 // See interface py.Context defined in py/run.go
 func (ctx *context) Done() <-chan struct{} {
 	return ctx.done
+}
+
+func (ctx *context) ExecutionState() *py.ExecutionState {
+	return ctx.executionState
+}
+
+func (ctx *context) SetExecutionState(state *py.ExecutionState) {
+	ctx.executionState = state
 }
 
 var defaultPaths = []py.Object{
